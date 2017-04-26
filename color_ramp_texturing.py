@@ -16,6 +16,10 @@ image_to_export = None
 node_val_ramp = None
 node_col_ramp = None
 
+def init_settings(context):
+    context.space_data.viewport_shade = 'MATERIAL'
+    context.scene.render.engine = 'CYCLES'
+
 def create_new_image(context, name):
     image = bpy.data.images.new(name=(name + "_col"), width=1, height=256)
     return(image)
@@ -103,13 +107,21 @@ def create_gradient_material(context, mesh_name):
     nodes.active = image_node
     return(mat)
 
-def create_composite(context, image):
+def create_composite(context, image, path):
     context.scene.use_nodes = True
     composite_nodes = context.scene.node_tree.nodes
     composite_nodes.clear()
+    #Improper way to enable backdrop, but oh well..
+    area = context.area
+    orig_area = area.type
+    area.type = 'NODE_EDITOR'
+    space_data = area.spaces.active
+    space_data.show_backdrop = True
+    area.type = orig_area
+    ##
     links = context.scene.node_tree.links
     #Node creation
-    cnode_output = composite_nodes.new("CompositorNodeViewer")
+    cnode_output = composite_nodes.new("CompositorNodeOutputFile")
     cnode_image = composite_nodes.new("CompositorNodeImage")
     cnode_blur = composite_nodes.new("CompositorNodeBlur")
     #Node settings
@@ -117,6 +129,7 @@ def create_composite(context, image):
     cnode_blur.use_relative = True
     cnode_blur.factor_y = 5
     cnode_image.image = image
+    cnode_output.base_path = path
     #Node linking
     links.new(cnode_image.outputs[0], cnode_blur.inputs[0])
     links.new(cnode_blur.outputs[0], cnode_output.inputs[0])
@@ -168,6 +181,7 @@ class ProcessMesh(bpy.types.Operator):
     
     def execute(self, context):
         if context.active_object:
+            init_settings(context)
             ob = context.active_object
             mesh_name = ob.name
             if ob.mode != 'EDIT':
@@ -195,17 +209,25 @@ class Export(bpy.types.Operator):
             ob = context.active_object
             scn = context.scene
             global image_to_export
+            #
+            #Setup bake settings and do the bake
+            #
             scn.cycles.bake_type = 'DIFFUSE'
             bake_settings = bpy.data.scenes[scn.name].render.bake
             bake_settings.use_pass_color = True
             bake_settings.use_pass_direct = False
             bake_settings.use_pass_indirect = False
             bpy.ops.object.bake(type='DIFFUSE')
-            create_composite(context, image_to_export)
-            composite_image = bpy.data.images['Viewer Node']
+            #First export comes out blank. Must have something to do with the order.
+            #composite_image = bpy.data.images['Viewer Node']
             export_path = bpy.data.scenes[scn.name].file_dir
+            ###Should use filename_path so it doesn't save out to 'image0001', but can't fix it as of yet.
+            #filename_path = (export_path + image_to_export.name + ".png")
+            create_composite(context, image_to_export, export_path)
             self.fbx_export(context, export_path, ob.name)
-            composite_image.save_render(export_path + image_to_export.name + ".png")
+            #This is currently a simpler way to save the image to file.
+            bpy.ops.render.render()
+            #composite_image.save_render(export_path + image_to_export.name + ".png")
             return {'FINISHED'}
     
     def fbx_export(self, context, file_dir, name):
@@ -214,6 +236,7 @@ class Export(bpy.types.Operator):
         return {'FINISHED'}
 
 def register():
+    bpy.types.Scene.file_dir = None
     bpy.types.Scene.file_dir = StringProperty(name="Path", subtype="FILE_PATH")
     
     bpy.utils.register_class(ProcessMesh)

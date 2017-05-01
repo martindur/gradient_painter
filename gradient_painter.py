@@ -2,7 +2,7 @@ import bpy
 from bpy.props import *
 
 bl_info = {
-    "name" : "Gradient Texturing",
+    "name" : "Gradient Painter",
     "author" : "Martin Durhuus",
     "version" : (0,1),
     "blender" : (2,78,0),
@@ -75,15 +75,16 @@ def create_gradient_material(context, mesh_name):
     tmp_loc = node_mapping.location
     node_mapping.vector_type = 'TEXTURE'
     node_mapping.rotation[2] = 1.5708 #90d rotation in radians
-    #Texture coord node
-    node_tex_coord = nodes.new("ShaderNodeTexCoord")
-    node_tex_coord.location.x = tmp_loc.x - margin
+    #UV Map node
+    node_UV_map = nodes.new("ShaderNodeUVMap")
+    node_UV_map.uv_map = "ProjectionMap"
+    node_UV_map.location.x = tmp_loc.x - margin
     
     #
     #Node linking(Left to right)
     #
     node_links = mat.node_tree.links
-    node_links.new(node_tex_coord.outputs[2], node_mapping.inputs[0])
+    node_links.new(node_UV_map.outputs[0], node_mapping.inputs[0])
     node_links.new(node_mapping.outputs[0], node_gradient_tex.inputs[0])
     node_links.new(node_gradient_tex.outputs[0], node_col_ramp.inputs[0])
     node_links.new(node_gradient_tex.outputs[0], node_val_ramp.inputs[0])
@@ -134,7 +135,29 @@ def create_composite(context, image, path):
     links.new(cnode_image.outputs[0], cnode_blur.inputs[0])
     links.new(cnode_blur.outputs[0], cnode_output.inputs[0])
     
-
+def handle_projection(context):
+    if context.object.data.uv_textures.active_index == 0 or\
+    len(context.object.data.uv_textures) == 0:
+        bpy.ops.uv.smart_project(angle_limit=66,
+                                island_margin=0.02,
+                                user_area_weight=0,
+                                use_aspect=False,
+                                stretch_to_bounds=True
+                                )
+    for uv in context.object.data.uv_textures:
+        if uv.name == "ProjectionMap":
+            projection_map = uv
+            bpy.ops.uv.project_from_view(orthographic=True,
+                                         scale_to_bounds = True
+                                         )
+            return projection_map
+    bpy.ops.mesh.uv_texture_add()
+    projection_map = context.object.data.uv_textures[-1]
+    projection_map.name = "ProjectionMap"
+    bpy.ops.uv.project_from_view(orthographic=True,
+                                 scale_to_bounds = True
+                                 )
+    return projection_map
 
 class MenuPanel(bpy.types.Panel):
     bl_idname = "paint.gradient_texturing"
@@ -148,7 +171,7 @@ class MenuPanel(bpy.types.Panel):
         scn = context.scene
         
         col = layout.column(align=False)
-        col.label(text="Initialize:")
+        col.label(text="Gradient from view:")
         row = col.row(align=False)
         row.operator("bake.process_mesh")
         row = layout.row()
@@ -176,21 +199,19 @@ class MenuPanel(bpy.types.Panel):
 class ProcessMesh(bpy.types.Operator):
     """Unwraps, applies material and adds empty texture"""
     bl_idname = "bake.process_mesh"
-    bl_label = "Process Mesh"
+    bl_label = "Update"
     bl_options = {'REGISTER', 'UNDO'}
     
     def execute(self, context):
         if context.active_object:
             init_settings(context)
             ob = context.active_object
-            mesh_name = ob.name
+            mesh_name = ob.name 
             if ob.mode != 'EDIT':
                 bpy.ops.object.editmode_toggle()
-            bpy.ops.view3d.viewnumpad(type = 'FRONT')
-            bpy.ops.view3d.view_selected()
-            bpy.ops.uv.project_from_view(orthographic = True, scale_to_bounds = True)
-            bpy.context.space_data.show_only_render = True
-            ob.active_material = create_gradient_material(context, mesh_name)
+            projection_map = handle_projection(context)
+            if ob.active_material == None:
+                ob.active_material = create_gradient_material(context, mesh_name)
             if ob.mode == 'EDIT':
                 bpy.ops.object.editmode_toggle()
             return {'FINISHED'}
@@ -223,11 +244,11 @@ class Export(bpy.types.Operator):
             export_path = bpy.data.scenes[scn.name].file_dir
             ###Should use filename_path so it doesn't save out to 'image0001', but can't fix it as of yet.
             #filename_path = (export_path + image_to_export.name + ".png")
-            create_composite(context, image_to_export, export_path)
+            #create_composite(context, image_to_export, export_path)
             self.fbx_export(context, export_path, ob.name)
             #This is currently a simpler way to save the image to file.
-            bpy.ops.render.render()
-            #composite_image.save_render(export_path + image_to_export.name + ".png")
+            #bpy.ops.render.render()
+            image_to_export.save_render(export_path + image_to_export.name + ".png")
             return {'FINISHED'}
     
     def fbx_export(self, context, file_dir, name):

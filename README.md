@@ -1,4 +1,4 @@
-# gradient_texturing
+# Gradient Painter
 
 Info:
 

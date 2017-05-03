@@ -10,6 +10,7 @@ bl_info = {
 }
 
 import bpy
+from collections import OrderedDict
 from bpy.props import (
         StringProperty,
         BoolProperty,
@@ -56,7 +57,7 @@ def texture_baking(context, mat, image, bake_type='DIFFUSE'):
         bake_settings.use_pass_color = True
         bake_settings.use_pass_direct = False
         bake_settings.use_pass_indirect = False
-    bpy.ops.object.bake(bake_type)
+    bpy.ops.object.bake(type=bake_type)
 
 def create_base_material(context, mesh_name):
     mat = bpy.data.materials.new(mesh_name + "_mat")
@@ -84,6 +85,7 @@ def create_gradient_material(context, mesh_name):
     node_multiply_ao = nodes.new("ShaderNodeMixRGB")
     node_multiply_ao.blend_type = 'MULTIPLY'
     node_multiply_ao.inputs['Fac'].default_value = 1.0
+    node_multiply_ao.inputs[2].default_value = (1, 1, 1, 1)
     node_multiply_ao.location.x = tmp_loc.x - margin
     tmp_loc = node_multiply_ao.location
     #Mix node set to Multiply
@@ -138,47 +140,73 @@ def create_gradient_material(context, mesh_name):
     node_links.new(node_gradient_tex.outputs[0], node_val_ramp.inputs[0])
     node_links.new(node_col_ramp.outputs[0], node_multiply.inputs[1])
     node_links.new(node_val_ramp.outputs[0], node_multiply.inputs[2])
-    node_links.new(node_multiply.outputs[0], node_multiply_ao.inputs[0])
+    node_links.new(node_multiply.outputs[0], node_multiply_ao.inputs[1])
     node_links.new(node_multiply_ao.outputs[0], node_diffuse.inputs[0])
     node_links.new(node_diffuse.outputs[0], node_output.inputs[0])
 
     return(mat)
     
+def smart_uv_project():
+    bpy.ops.uv.smart_project(angle_limit=66,
+                             island_margin=0.02,
+                             user_area_weight=0,
+                             use_aspect=False,
+                             stretch_to_bounds=True
+                             )
+
+def uv_creation(context):
+    gen_uv = context.scene.generate_UV
+    uv_textures = context.object.data.uv_textures
+    global object_attr
+
+    if gen_uv:
+        if len(uv_textures) == 0:    
+            smart_uv_project()
+            object_attr['uv_map'] = uv_textures[0]
+            proj_map = uv_textures.new(name="ProjectionMap")
+            object_attr['proj_map'] = proj_map
+        elif len(uv_textures) == 1:
+            if uv_textures[0].name == "ProjectionMap":
+                object_attr['proj_map'] = uv_textures[0]
+                uv_map = uv_textures.new()
+                object_attr['uv_map'] = uv_map
+                uv_textures.active = uv_map
+                smart_uv_project()
+            else:
+                smart_uv_project()
+                object_attr['uv_map'] = uv_textures[0]
+                proj_map = uv_textures.new("ProjectionMap")
+                object_attr['proj_map'] = proj_map
+        else:
+            proj_map_exists = False
+            for uv in uv_textures:
+                if uv.name == "ProjectionMap":
+                    proj_map_exists = True
+                    object_attr['proj_map'] = uv
+            for uv in uv_textures:
+                if proj_map_exists == False:
+                    proj_map = uv_textures.new("ProjectionMap")
+                    object_attr['proj_map'] = proj_map
+                    proj_map_exists = True
+                if uv.name != "ProjectionMap":
+                    uv_textures.active = uv
+                    object_attr['uv_map'] = uv
+                    smart_uv_project()
+                    break
+            
+
 def handle_projection(context):
     gen_uv = context.scene.generate_UV
     uv_textures = context.object.data.uv_textures
-    if gen_uv:
-        if len(uv_textures) == 0:    
-            bpy.ops.uv.smart_project(angle_limit=66,
-                                    island_margin=0.02,
-                                    user_area_weight=0,
-                                    use_aspect=False,
-                                    stretch_to_bounds=True
-                                    )
-        elif uv_textures.active.name == "ProjectionMap" and \
-        len(uv_textures) == 1:
-            uv_map = bpy.ops.mesh.uv_texture_add()
-            bpy.ops.uv.smart_project(angle_limit=66,
-                                    island_margin=0.02,
-                                    user_area_weight=0,
-                                    use_aspect=False,
-                                    stretch_to_bounds=True
-                                    )
-    for index, uv in enumerate(uv_textures):
-        if uv.name == "ProjectionMap":
-            projection_map = uv
-            uv_textures.active_index = index
-            bpy.ops.uv.project_from_view(orthographic=True,
-                                         scale_to_bounds = True
-                                         )
-            return projection_map
-    bpy.ops.mesh.uv_texture_add()
-    projection_map = uv_textures[-1]
-    projection_map.name = "ProjectionMap"
-    bpy.ops.uv.project_from_view(orthographic=True,
-                                 scale_to_bounds = True
-                                 )
-    return projection_map
+    global object_attr
+
+    uv_creation(context)
+
+    uv_textures.active = uv_textures[1]
+    #uv_textures.active.name = "SutPik"
+    print(object_attr['proj_map'])
+    bpy.ops.uv.project_from_view(orthographic=True, scale_to_bounds = True)
+    #uv_textures.active = uv_map
 
 class MenuPanel(bpy.types.Panel):
     bl_idname = "paint.gradient_texturing"
@@ -233,7 +261,7 @@ class ProcessMesh(bpy.types.Operator):
             mesh_name = ob.name 
             if ob.mode != 'EDIT':
                 bpy.ops.object.editmode_toggle()
-            projection_map = handle_projection(context)
+            handle_projection(context)
             if ob.active_material == None:
                 ob.active_material = create_gradient_material(context, mesh_name)
             if ob.mode == 'EDIT':
@@ -251,10 +279,11 @@ class BakeTexture(bpy.types.Operator):
 
     def execute(self, context):
         enable_ao = context.scene.enable_ao
+        global object_attr
 
         if context.active_object:
             ob = context.active_object
-            global mat
+            mat = object_attr['Material']
             if mat is None:
                 self.report({'WARNING'}, "Calculate the gradient before baking!")
                 return {'CANCELLED'}

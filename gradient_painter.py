@@ -9,6 +9,11 @@ bl_info = {
     "category" : "Paint",
 }
 
+#INFO:
+#       GrP_ID: Unique ID given to selected/active object. Used to keep track of generated maps, materials for said object.
+#       GrP_type: 'Special' Type of object. Distinquish e.g. multiple images for same object(Shared ID).
+#       GrP types = ('UV', 'PROJ', 'COL', 'AO')
+
 import bpy
 from collections import OrderedDict
 from bpy.props import (
@@ -28,17 +33,48 @@ object_attr = {}
 #Keep track of the main shader
 mat = None
 
-def init_settings(context):
+def init_settings(context, obj):
+    #Basic settings required to view the gradient.
     context.space_data.viewport_shade = 'MATERIAL'
     context.scene.render.engine = 'CYCLES'
 
+    #Set object ID
+    object_IDs = []
+    for ob in bpy.data.objects:
+        try:
+            if ob['GrP_ID']:
+                object_IDs.append(ob['GrP_ID'])
+        except:
+            continue
+
+    if len(object_IDs) == 0:
+        obj['GrP_ID'] = 0
+    else:
+        obj['GrP_ID'] = max(object_IDs) + 1
+    return obj
+
 def create_new_image(context, name, tex_type='COL'):
+    ob = context.active_object
     tex_width = context.scene.texture_width
     tex_height = context.scene.texture_height
+
     if tex_type == 'AO':
         image = bpy.data.images.new(name=(name + "_ao"), width=tex_width, height=tex_height)
+        image['GrP_type'] = 'AO'
     elif tex_type == 'COL':
         image = bpy.data.images.new(name=(name + "_col"), width=tex_width, height=tex_height)
+        image['GrP_type'] = 'COL'
+
+    #Check for existing image for this object of same requested type.
+    for img in bpy.data.images:
+        try:
+            if img['GrP_ID'] == ob['GrP_ID'] and img['GrP_type'] == tex_type:
+                img['GrP_ID'] = -1
+        except:
+            continue
+
+    image['GrP_ID'] = ob['GrP_ID']
+
     return(image)
 
 def texture_baking(context, mat, image, bake_type='DIFFUSE'):
@@ -49,10 +85,8 @@ def texture_baking(context, mat, image, bake_type='DIFFUSE'):
     image_node.image = image
     nodes.active = image_node
     scn.cycles.bake_type = bake_type
-    if bake_type == 'AO':
-        object_attr['AO_node'] = image_node
-    elif bake_type == 'DIFFUSE':
-        object_attr['DIF_node'] = image_node
+    if bake_type == 'DIFFUSE':
+        #Only include color, no indirect/direct lighting info
         bake_settings = bpy.data.scenes[scn.name].render.bake
         bake_settings.use_pass_color = True
         bake_settings.use_pass_direct = False
@@ -69,6 +103,7 @@ def create_base_material(context, mesh_name):
 
 
 def create_gradient_material(context, mesh_name):
+    ob = context.active_object
     margin = 300 #Distance between nodes
     mat, node_output = create_base_material(context, mesh_name) #Empty mat with output
     nodes = mat.node_tree.nodes
@@ -120,15 +155,14 @@ def create_gradient_material(context, mesh_name):
     node_UV_map = nodes.new("ShaderNodeUVMap")
     node_UV_map.uv_map = "ProjectionMap"
     node_UV_map.location.x = tmp_loc.x - margin
-    
-    #Assign to object's attributes
-    global object_attr
-    object_attr['Material'] = mat
-    object_attr['Col_ramp'] = node_col_ramp
-    object_attr['Val_ramp'] = node_val_ramp
-    object_attr['BSDF_node'] = node_diffuse
-    object_attr['Mix_node'] = node_multiply_ao
-    object_attr['Output_node'] = node_output
+
+    #Assign ID to relevant objects
+    mat['GrP_ID'] = ob['GrP_ID']
+    node_col_ramp['GrP_ID'] = ob['GrP_ID']
+    node_val_ramp['GrP_ID'] = ob['GrP_ID']
+    node_diffuse['GrP_ID'] = ob['GrP_ID']
+    node_multiply_ao['GrP_ID'] = ob['GrP_ID']
+    node_output['GrP_ID'] = ob['GrP_ID']
 
     #
     #Node linking(Left to right)
@@ -154,7 +188,8 @@ def smart_uv_project():
                              stretch_to_bounds=True
                              )
 
-def uv_creation(context):
+def uv_creation_with_unsupported_ID_Properties(context):
+    ob = context.active_object
     gen_uv = context.scene.generate_UV
     uv_textures = context.object.data.uv_textures
     global object_attr
@@ -162,51 +197,113 @@ def uv_creation(context):
     if gen_uv:
         if len(uv_textures) == 0:    
             smart_uv_project()
-            object_attr['uv_map'] = uv_textures[0]
+            uv_textures[0]['GrP_ID'] = ob['GrP_ID']
+            uv_textures[0]['GrP_type'] = 'UV'
             proj_map = uv_textures.new(name="ProjectionMap")
-            object_attr['proj_map'] = proj_map
+            proj_map['GrP_ID'] = ob['GrP_ID']
+            proj_map['GrP_type'] = 'PROJ'
         elif len(uv_textures) == 1:
             if uv_textures[0].name == "ProjectionMap":
-                object_attr['proj_map'] = uv_textures[0]
+                uv_textures[0]['GrP_ID'] = ob['GrP_ID']
+                uv_textures[0]['GrP_type'] = 'PROJ'
                 uv_map = uv_textures.new()
-                object_attr['uv_map'] = uv_map
+                uv_map['GrP_ID'] = ob['GrP_ID']
+                uv_map['GrP_type'] = 'UV'
                 uv_textures.active = uv_map
                 smart_uv_project()
             else:
                 smart_uv_project()
-                object_attr['uv_map'] = uv_textures[0]
+                uv_textures[0]['GrP_ID'] = ob['GrP_ID']
+                uv_textures[0]['GrP_type'] = 'UV'
                 proj_map = uv_textures.new("ProjectionMap")
-                object_attr['proj_map'] = proj_map
+                proj_map['GrP_ID'] = ob['GrP_ID']
+                proj_map['GrP_type'] = 'PROJ'
         else:
             proj_map_exists = False
             for uv in uv_textures:
                 if uv.name == "ProjectionMap":
                     proj_map_exists = True
-                    object_attr['proj_map'] = uv
+                    uv['GrP_ID'] = ob['GrP_ID']
+                    uv['GrP_type'] = 'PROJ'
             for uv in uv_textures:
                 if proj_map_exists == False:
                     proj_map = uv_textures.new("ProjectionMap")
-                    object_attr['proj_map'] = proj_map
+                    proj_map['GrP_ID'] = ob['GrP_ID']
+                    proj_map['GrP_type'] = 'PROJ'
                     proj_map_exists = True
                 if uv.name != "ProjectionMap":
                     uv_textures.active = uv
-                    object_attr['uv_map'] = uv
+                    uv['GrP_ID'] = ob['GrP_ID']
+                    uv['GrP_type'] = 'UV'
                     smart_uv_project()
                     break
-            
 
-def handle_projection(context):
+def uv_creation(context):
+    ob = context.active_object
     gen_uv = context.scene.generate_UV
     uv_textures = context.object.data.uv_textures
-    global object_attr
 
-    uv_creation(context)
+    if gen_uv:
+        if len(uv_textures) == 0:    
+            smart_uv_project()
+            uv_map = uv_textures[0]
+            proj_map = uv_textures.new(name="ProjectionMap")
+        elif len(uv_textures) == 1:
+            if uv_textures[0].name == "ProjectionMap":
+                proj_map = uv_textures[0]
+                uv_map = uv_textures.new()
+                uv_textures.active = uv_map
+                smart_uv_project()
+            else:
+                smart_uv_project()
+                uv_map = uv_textures[0]
+                proj_map = uv_textures.new("ProjectionMap")
+        else:
+            proj_map_exists = False
+            for uv in uv_textures:
+                if uv.name == "ProjectionMap":
+                    proj_map_exists = True
+                    proj_map = uv
+            for uv in uv_textures:
+                if proj_map_exists == False:
+                    proj_map = uv_textures.new("ProjectionMap")
+                    proj_map_exists = True
+                if uv.name != "ProjectionMap":
+                    active_uv = uv_textures.active
+                    uv_textures.active = uv
+                    uv_map = uv
+                    smart_uv_project()
+                    uv_textures.active = active_uv
+                    break
+    return (uv_map, proj_map)
 
-    uv_textures.active = uv_textures[1]
-    #uv_textures.active.name = "SutPik"
-    print(object_attr['proj_map'])
+def handle_projection(context):
+    ob = context.active_object
+    gen_uv = context.scene.generate_UV
+    uv_textures = context.object.data.uv_textures
+
+    
+
+    #uv_map, proj_map = uv_creation(context)            ##UVs are being a bitch. Will get this to work at a later time.
+    
+    if len(uv_textures) == 0:
+        smart_uv_project()
+        uv_map = uv_textures[0]
+        proj_map = uv_textures.new("ProjectionMap")
+    else:
+        if not any(uv.name == "ProjectionMap" for uv in uv_textures):
+            proj_map = uv_textures.new("ProjectionMap")
+        for uv in uv_textures:
+            if uv.name != "ProjectionMap":
+                uv_map = uv
+            else:
+                proj_map = uv
+            
+    
+    uv_textures.active = proj_map
     bpy.ops.uv.project_from_view(orthographic=True, scale_to_bounds = True)
-    #uv_textures.active = uv_map
+    print("Made it here!")
+    uv_textures.active = uv_map
 
 class MenuPanel(bpy.types.Panel):
     bl_idname = "paint.gradient_texturing"
@@ -256,9 +353,9 @@ class ProcessMesh(bpy.types.Operator):
 
     def execute(self, context):
         if context.active_object:
-            init_settings(context)
             ob = context.active_object
-            mesh_name = ob.name 
+            mesh_name = ob.name
+            ob = init_settings(context, ob)
             if ob.mode != 'EDIT':
                 bpy.ops.object.editmode_toggle()
             handle_projection(context)

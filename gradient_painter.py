@@ -80,7 +80,6 @@ def create_new_image(context, name, tex_type='COL'):
 def texture_baking(context, mat, image, bake_type='DIFFUSE'):
     nodes = mat.node_tree.nodes
     scn = context.scene
-    global object_attr
     image_node = nodes.new("ShaderNodeTexImage")
     image_node.image = image
     nodes.active = image_node
@@ -91,7 +90,7 @@ def texture_baking(context, mat, image, bake_type='DIFFUSE'):
         bake_settings.use_pass_color = True
         bake_settings.use_pass_direct = False
         bake_settings.use_pass_indirect = False
-    bpy.ops.object.bake(type=bake_type)
+    bpy.ops.object.bake(type=bake_type, uv_layer="UVMap")
 
 def create_base_material(context, mesh_name):
     mat = bpy.data.materials.new(mesh_name + "_mat")
@@ -282,27 +281,37 @@ def handle_projection(context):
     gen_uv = context.scene.generate_UV
     uv_textures = context.object.data.uv_textures
 
-    
-
     #uv_map, proj_map = uv_creation(context)            ##UVs are being a bitch. Will get this to work at a later time.
-    
     if len(uv_textures) == 0:
-        smart_uv_project()
-        uv_map = uv_textures[0]
+        uv_map = uv_textures.new() #Default settings creates uv map with name 'UVMap'
+        smart_uv_project() #Unwraps the current uv map
         proj_map = uv_textures.new("ProjectionMap")
-    else:
-        if not any(uv.name == "ProjectionMap" for uv in uv_textures):
+
+    elif len(uv_textures) == 1:
+        if uv_textures[0].name == "ProjectionMap":
+            proj_map = uv_textures[0]
+            uv_map = uv_textures.new()
+            smart_uv_project()
+        else:
+            uv_map = uv_textures[0]
+            uv_map.name = "UVMap"
             proj_map = uv_textures.new("ProjectionMap")
+    
+    else:
+        for uv in uv_textures:
+            if not any(uv.name == "ProjectionMap" for uv in uv_textures):
+                proj_map = uv_textures.new("ProjectionMap")
+            else:
+                if uv.name == "ProjectionMap":
+                    proj_map = uv
         for uv in uv_textures:
             if uv.name != "ProjectionMap":
                 uv_map = uv
-            else:
-                proj_map = uv
-            
-    
+                uv_map.name = "UVMap"
+                break
+
     uv_textures.active = proj_map
     bpy.ops.uv.project_from_view(orthographic=True, scale_to_bounds = True)
-    print("Made it here!")
     uv_textures.active = uv_map
 
 class MenuPanel(bpy.types.Panel):
@@ -361,6 +370,18 @@ class ProcessMesh(bpy.types.Operator):
             handle_projection(context)
             if ob.active_material == None:
                 ob.active_material = create_gradient_material(context, mesh_name)
+            else:
+                mat_id_exists = False
+                for mat in bpy.data.materials:
+                    try:
+                        if mat['GrP_ID'] == ob['GrP_ID']:
+                            ob.active_material = mat
+                            mat_id_exists = True
+                            break
+                    except:
+                        continue
+                if mat_id_exists == False:
+                    ob.active_material = create_gradient_material(context, mesh_name)
             if ob.mode == 'EDIT':
                 bpy.ops.object.editmode_toggle()
             return {'FINISHED'}
@@ -376,11 +397,18 @@ class BakeTexture(bpy.types.Operator):
 
     def execute(self, context):
         enable_ao = context.scene.enable_ao
-        global object_attr
 
         if context.active_object:
             ob = context.active_object
-            mat = object_attr['Material']
+            
+            #Find mat with the proper object ID
+            for mt in bpy.data.materials:
+                try:
+                    if mt['GrP_ID'] == ob['GrP_ID']:
+                        mat = mt
+                except:
+                    continue
+
             if mat is None:
                 self.report({'WARNING'}, "Calculate the gradient before baking!")
                 return {'CANCELLED'}

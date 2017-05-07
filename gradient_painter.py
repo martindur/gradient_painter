@@ -129,13 +129,13 @@ def create_gradient_material(context, mesh_name):
     node_multiply.location.x = tmp_loc.x - margin
     tmp_loc = node_multiply.location
     #First ramp: Used to colorize the mesh
-    global node_col_ramp
+    #global node_col_ramp
     node_col_ramp = nodes.new("ShaderNodeValToRGB") #Make global for panel
     node_col_ramp.name = "Color"
     node_col_ramp.location.x = tmp_loc.x - margin
     tmp_loc = node_col_ramp.location
     #Second ramp: Used for value grading(Position map kinda)
-    global node_val_ramp
+    #global node_val_ramp
     node_val_ramp = nodes.new("ShaderNodeValToRGB") #Make global for panel
     node_val_ramp.name = "Value"
     node_val_ramp.location.x = tmp_loc.x
@@ -330,9 +330,6 @@ class MenuPanel(bpy.types.Panel):
         col.label(text="Gradient from View:")
         row = col.row(align=False)
         row.operator("bake.process_mesh")
-        
-        row = layout.row()
-        layout.prop(scn, "generate_UV")
 
         layout.label("Baking:")
         row = layout.row()

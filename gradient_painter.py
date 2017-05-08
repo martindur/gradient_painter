@@ -37,12 +37,17 @@ def init_settings(context, obj):
     #Basic settings required to view the gradient.
     context.space_data.viewport_shade = 'MATERIAL'
     context.scene.render.engine = 'CYCLES'
+    try:
+        if obj['GrP_ID'] >= 0:
+            return obj
+    except:
+        pass
 
     #Set object ID
     object_IDs = []
     for ob in bpy.data.objects:
         try:
-            if ob['GrP_ID']:
+            if ob['GrP_ID'] >= 0:
                 object_IDs.append(ob['GrP_ID'])
         except:
             continue
@@ -90,7 +95,7 @@ def texture_baking(context, mat, image, bake_type='DIFFUSE'):
         bake_settings.use_pass_color = True
         bake_settings.use_pass_direct = False
         bake_settings.use_pass_indirect = False
-    bpy.ops.object.bake(type=bake_type, uv_layer="UVMap")
+    bpy.ops.object.bake(type=bake_type)#, uv_layer="UVMap")
 
 def create_base_material(context, mesh_name):
     mat = bpy.data.materials.new(mesh_name + "_mat")
@@ -282,6 +287,10 @@ def handle_projection(context):
     uv_textures = context.object.data.uv_textures
 
     #uv_map, proj_map = uv_creation(context)            ##UVs are being a bitch. Will get this to work at a later time.
+    
+    #
+    #Take care of all(as if) cases for uv maps, and adds a projection map accordingly.
+    #
     if len(uv_textures) == 0:
         uv_map = uv_textures.new() #Default settings creates uv map with name 'UVMap'
         smart_uv_project() #Unwraps the current uv map
@@ -310,6 +319,7 @@ def handle_projection(context):
                 uv_map.name = "UVMap"
                 break
 
+    ##Default behaviour for projecting, needed for the gradient material to work.
     uv_textures.active = proj_map
     bpy.ops.uv.project_from_view(orthographic=True, scale_to_bounds = True)
     uv_textures.active = uv_map

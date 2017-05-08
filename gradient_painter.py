@@ -25,13 +25,8 @@ from bpy.props import (
         CollectionProperty,
         )
 
-image_to_export = None
 node_val_ramp = None
 node_col_ramp = None
-
-object_attr = {}
-#Keep track of the main shader
-mat = None
 
 def init_settings(context, obj):
     #Basic settings required to view the gradient.
@@ -192,102 +187,15 @@ def smart_uv_project():
                              stretch_to_bounds=True
                              )
 
-def uv_creation_with_unsupported_ID_Properties(context):
-    ob = context.active_object
-    gen_uv = context.scene.generate_UV
-    uv_textures = context.object.data.uv_textures
-    global object_attr
 
-    if gen_uv:
-        if len(uv_textures) == 0:    
-            smart_uv_project()
-            uv_textures[0]['GrP_ID'] = ob['GrP_ID']
-            uv_textures[0]['GrP_type'] = 'UV'
-            proj_map = uv_textures.new(name="ProjectionMap")
-            proj_map['GrP_ID'] = ob['GrP_ID']
-            proj_map['GrP_type'] = 'PROJ'
-        elif len(uv_textures) == 1:
-            if uv_textures[0].name == "ProjectionMap":
-                uv_textures[0]['GrP_ID'] = ob['GrP_ID']
-                uv_textures[0]['GrP_type'] = 'PROJ'
-                uv_map = uv_textures.new()
-                uv_map['GrP_ID'] = ob['GrP_ID']
-                uv_map['GrP_type'] = 'UV'
-                uv_textures.active = uv_map
-                smart_uv_project()
-            else:
-                smart_uv_project()
-                uv_textures[0]['GrP_ID'] = ob['GrP_ID']
-                uv_textures[0]['GrP_type'] = 'UV'
-                proj_map = uv_textures.new("ProjectionMap")
-                proj_map['GrP_ID'] = ob['GrP_ID']
-                proj_map['GrP_type'] = 'PROJ'
-        else:
-            proj_map_exists = False
-            for uv in uv_textures:
-                if uv.name == "ProjectionMap":
-                    proj_map_exists = True
-                    uv['GrP_ID'] = ob['GrP_ID']
-                    uv['GrP_type'] = 'PROJ'
-            for uv in uv_textures:
-                if proj_map_exists == False:
-                    proj_map = uv_textures.new("ProjectionMap")
-                    proj_map['GrP_ID'] = ob['GrP_ID']
-                    proj_map['GrP_type'] = 'PROJ'
-                    proj_map_exists = True
-                if uv.name != "ProjectionMap":
-                    uv_textures.active = uv
-                    uv['GrP_ID'] = ob['GrP_ID']
-                    uv['GrP_type'] = 'UV'
-                    smart_uv_project()
-                    break
 
-def uv_creation(context):
-    ob = context.active_object
-    gen_uv = context.scene.generate_UV
-    uv_textures = context.object.data.uv_textures
 
-    if gen_uv:
-        if len(uv_textures) == 0:    
-            smart_uv_project()
-            uv_map = uv_textures[0]
-            proj_map = uv_textures.new(name="ProjectionMap")
-        elif len(uv_textures) == 1:
-            if uv_textures[0].name == "ProjectionMap":
-                proj_map = uv_textures[0]
-                uv_map = uv_textures.new()
-                uv_textures.active = uv_map
-                smart_uv_project()
-            else:
-                smart_uv_project()
-                uv_map = uv_textures[0]
-                proj_map = uv_textures.new("ProjectionMap")
-        else:
-            proj_map_exists = False
-            for uv in uv_textures:
-                if uv.name == "ProjectionMap":
-                    proj_map_exists = True
-                    proj_map = uv
-            for uv in uv_textures:
-                if proj_map_exists == False:
-                    proj_map = uv_textures.new("ProjectionMap")
-                    proj_map_exists = True
-                if uv.name != "ProjectionMap":
-                    active_uv = uv_textures.active
-                    uv_textures.active = uv
-                    uv_map = uv
-                    smart_uv_project()
-                    uv_textures.active = active_uv
-                    break
-    return (uv_map, proj_map)
 
 def handle_projection(context):
     ob = context.active_object
     gen_uv = context.scene.generate_UV
     uv_textures = context.object.data.uv_textures
 
-    #uv_map, proj_map = uv_creation(context)            ##UVs are being a bitch. Will get this to work at a later time.
-    
     #
     #Take care of all(as if) cases for uv maps, and adds a projection map accordingly.
     #
@@ -365,7 +273,27 @@ class ProcessMesh(bpy.types.Operator):
     bl_idname = "bake.process_mesh"
     bl_label = "Calculate"
     bl_options = {'REGISTER', 'UNDO'}
-    
+
+    def check_materials(self, context, obj, mesh_name):
+        """Checks existing materials. If a material is missing, 
+        this function calls the create function for materials."""
+        try:
+            if obj.active_material['GrP_ID'] >= 0:
+                return
+        except:
+            if len(bpy.data.materials) == 0:
+                obj.active_material = create_gradient_material(context, mesh_name)
+            mat_id_exists = False
+            for mat in bpy.data.materials:
+                try:
+                    if mat['GrP_ID'] == obj['GrP_ID']:
+                        obj.active_material = mat
+                        mat_id_exists = True
+                        break
+                except:
+                    continue
+            if mat_id_exists is False:
+                obj.active_material = create_gradient_material(context, mesh_name)
 
     def execute(self, context):
         if context.active_object:
@@ -375,20 +303,7 @@ class ProcessMesh(bpy.types.Operator):
             if ob.mode != 'EDIT':
                 bpy.ops.object.editmode_toggle()
             handle_projection(context)
-            if ob.active_material == None:
-                ob.active_material = create_gradient_material(context, mesh_name)
-            else:
-                mat_id_exists = False
-                for mat in bpy.data.materials:
-                    try:
-                        if mat['GrP_ID'] == ob['GrP_ID']:
-                            ob.active_material = mat
-                            mat_id_exists = True
-                            break
-                    except:
-                        continue
-                if mat_id_exists == False:
-                    ob.active_material = create_gradient_material(context, mesh_name)
+            self.check_materials(context, ob, mesh_name)
             if ob.mode == 'EDIT':
                 bpy.ops.object.editmode_toggle()
             return {'FINISHED'}

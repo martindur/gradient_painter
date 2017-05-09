@@ -1,7 +1,7 @@
 bl_info = {
     "name" : "Gradient Painter",
     "author" : "Martin Durhuus",
-    "version" : (0,1),
+    "version" : (0,2),
     "blender" : (2,78,0),
     "location" : "3d view",
     "description" : "A simple tool to quickly texture a mesh through a color ramp. Export currently gives you an .fbx and albedo map",
@@ -58,6 +58,13 @@ def create_new_image(context, name, tex_type='COL'):
     tex_width = context.scene.texture_width
     tex_height = context.scene.texture_height
 
+    for image in bpy.data.images:
+        try:
+            if image['GrP_ID'] == ob['GrP_ID'] and image['GrP_type'] == tex_type:
+                bpy.data.images.remove(image, do_unlink=True)
+        except:
+            continue
+
     if tex_type == 'AO':
         image = bpy.data.images.new(name=(name + "_ao"), width=tex_width, height=tex_height)
         image['GrP_type'] = 'AO'
@@ -78,19 +85,27 @@ def create_new_image(context, name, tex_type='COL'):
     return(image)
 
 def texture_baking(context, mat, image, bake_type='DIFFUSE'):
+    tex_width = context.scene.texture_width
+    tex_height = context.scene.texture_height
     nodes = mat.node_tree.nodes
     scn = context.scene
-    image_node = nodes.new("ShaderNodeTexImage")
+    if nodes.get('Image Texture'):
+        image_node = nodes.get('Image Texture')
+    else:
+        image_node = nodes.new("ShaderNodeTexImage")
     image_node.image = image
     nodes.active = image_node
     scn.cycles.bake_type = bake_type
+    #render = bpy.data.scenes[scn.name].render
+    #render.bake_type = bake_type
     if bake_type == 'DIFFUSE':
         #Only include color, no indirect/direct lighting info
         bake_settings = bpy.data.scenes[scn.name].render.bake
         bake_settings.use_pass_color = True
         bake_settings.use_pass_direct = False
         bake_settings.use_pass_indirect = False
-    bpy.ops.object.bake(type=bake_type)#, uv_layer="UVMap")
+    bpy.ops.object.bake(type=bake_type, width = tex_width, height = tex_height)
+    return {'FINISHED'}
 
 def create_base_material(context, mesh_name):
     mat = bpy.data.materials.new(mesh_name + "_mat")
@@ -193,7 +208,7 @@ def smart_uv_project():
 
 def handle_projection(context):
     ob = context.active_object
-    gen_uv = context.scene.generate_UV
+    use_proj = context.scene.use_projection
     uv_textures = context.object.data.uv_textures
 
     #
@@ -230,7 +245,8 @@ def handle_projection(context):
     ##Default behaviour for projecting, needed for the gradient material to work.
     uv_textures.active = proj_map
     bpy.ops.uv.project_from_view(orthographic=True, scale_to_bounds = True)
-    uv_textures.active = uv_map
+    if not use_proj:
+        uv_textures.active = uv_map
 
 class MenuPanel(bpy.types.Panel):
     bl_idname = "paint.gradient_texturing"
@@ -246,8 +262,14 @@ class MenuPanel(bpy.types.Panel):
 
         col = layout.column(align=False)
         col.label(text="Gradient from View:")
+        layout.prop(scn, "use_projection")
         row = col.row(align=False)
-        row.operator("bake.process_mesh")
+        try:
+            if ob['GrP_ID'] >= 0:
+                gr_label = "Update"
+        except:
+            gr_label = "Calculate"
+        row.operator("bake.process_mesh", text=gr_label)
 
         layout.label("Baking:")
         row = layout.row()
@@ -317,27 +339,41 @@ class BakeTexture(bpy.types.Operator):
     bl_label = "Bake"
     bl_options = {'REGISTER', 'UNDO'}
 
+    def check_images(self, context, ob, tex_type='COL'):
+        for image in bpy.data.images:
+            try:
+                if image['GrP_ID'] == ob['GrP_ID'] and image['GrP_type'] == tex_type:
+                    if image.size[0] == context.scene.texture_width and image.size[1] == context.scene.texture_height:
+                        return image
+            except:
+                continue
+        return create_new_image(context, ob.name, tex_type)
+
     def execute(self, context):
         enable_ao = context.scene.enable_ao
-
         if context.active_object:
             ob = context.active_object
             
             #Find mat with the proper object ID
-            for mt in bpy.data.materials:
-                try:
-                    if mt['GrP_ID'] == ob['GrP_ID']:
-                        mat = mt
-                except:
-                    continue
+            try:
+                if ob.active_material['GrP_ID'] >= 0:
+                    mat = ob.active_material
+            except:
+                for mt in bpy.data.materials:
+                    try:
+                        if mt['GrP_ID'] == ob['GrP_ID']:
+                            mat = mt
+                    except:
+                        continue
 
             if mat is None:
                 self.report({'WARNING'}, "Calculate the gradient before baking!")
                 return {'CANCELLED'}
-            image_dif = create_new_image(context, ob.name)
+            self.check_images
+            image_dif = self.check_images(context, ob)
             texture_baking(context, mat, image_dif)
             if enable_ao:
-                image_ao = create_new_image(context, ob.name, tex_type='AO')
+                image_ao = self.check_images(context, ob, tex_type='AO')
                 texture_baking(context, mat, image_ao, bake_type='AO')
             return {'FINISHED'}
         else:
@@ -365,8 +401,13 @@ def register():
     )
 
     bpy.types.Scene.enable_ao = BoolProperty(
-        name="Enable AO: ",
+        name="Enable AO",
         description="Enables Ambient Occlusion for baking",
+        default=False,
+    )
+    bpy.types.Scene.use_projection = BoolProperty(
+        name="Use Projection Map",
+        description="Bake to the projection UV map(Useful for texture size with simple linear gradients)",
         default=False,
     )
     bpy.utils.register_class(ProcessMesh)

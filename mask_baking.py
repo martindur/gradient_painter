@@ -30,15 +30,15 @@ def create_mat(name):
 def create_img(name, width, height):
     """Returns an image type"""
     img = bpy.data.images.new(name, width, height)
-    
+    img.use_fake_user = True
+    img.pack(as_png=True)
     return img
     
 
 def ao_mask(mask):
     """Returns an image with a baked Ambient Occlusion"""
     mask['mat'].node_tree.nodes.active = mask['image_node']
-    bpy.ops.object.bake('INVOKE_DEFAULT', type='AO')
-        
+    bpy.ops.object.bake(type='AO')
     return mask['image']
 
 def position_mask(context, mask):
@@ -63,8 +63,7 @@ def position_mask(context, mask):
     #Baking
     mask['mat'].node_tree.nodes.active = mask['image_node']
     enable_color_bake_settings()
-    bpy.ops.object.bake('INVOKE_DEFAULT', type='DIFFUSE')
-
+    bpy.ops.object.bake(type='DIFFUSE')
     return mask['image']
 
 def curvature_mask(context, mask):
@@ -77,13 +76,11 @@ def curvature_mask(context, mask):
     
     ##Subdivides a mesh to a number around 5k+. This is due to curvature being calculated on vertices.
     while len(ob.data.vertices) < 5000:     #Number is currently an educated guess.
-        if ob.mode != 'EDIT':
-            bpy.ops.object.editmode_toggle()
+        bpy.ops.object.mode_set(mode='EDIT')
         bpy.ops.mesh.subdivide()
-        bpy.ops.object.editmode_toggle()
+        bpy.ops.object.mode_set(mode='OBJECT')
 
-    if ob.mode != 'OBJECT':
-        bpy.ops.object.editmode_toggle()
+    bpy.ops.object.mode_set(mode='OBJECT')
 
     nodes = mask['mat'].node_tree.nodes
     #Nodes Creation
@@ -94,69 +91,89 @@ def curvature_mask(context, mask):
     #Baking
     mask['mat'].node_tree.nodes.active = mask['image_node']
     enable_color_bake_settings()
-    bpy.ops.object.bake('INVOKE_DEFAULT', type='DIFFUSE')
+    bpy.ops.object.bake(type='DIFFUSE')
     bpy.ops.object.delete()
 
     return mask['image']
 
-def get_mask(context, resolution, map_type):
+def get_mask(context, width, height, map_type):
     """Returns an image with a baked map depending on the 'type' parameter"""
-    mask = {}
-    if context.active_object:
-        ob = context.active_object
-        if ob.active_material:
-            original_mat = ob.active_material #Might want to handle this!
-            has_mat = True
-        else:
-            has_mat = False
-        mask['mat'], mask['output'] = create_mat(''.join(['mask_', map_type])) #Output is actually a BSDF node
-        ob.active_material = mask['mat']
-        mask['image_node'] = mask['mat'].node_tree.nodes.new("ShaderNodeTexImage")
-        mask['image'] = create_img(''.join([ob.name, '_', map_type]), resolution[0], resolution[1])
-        mask['image_node'].image = mask['image']
-
-        if map_type == 'AO':
-            img_mask = ao_mask(mask)
-        elif map_type == 'POS':
-            img_mask = position_mask(context, mask)
-        elif map_type == 'CURVE':
-            img_mask = curvature_mask(context, mask)
-        if has_mat:
-            #ob.active_material = original_mat
-        #bpy.data.materials.remove(mask['mat'], do_unlink=True)
-        return img_mask
+    mask = dict.fromkeys(['mat', 'output', 'image_node', 'image'])
+    context.scene.render.engine = 'CYCLES'
+    ob = context.active_object
+    if ob.active_material:
+        original_mat = ob.active_material #Might want to handle this!
+        has_mat = True
     else:
-        self.report({'WARNING'}, "No active selection!")
-        return {'FINISHED'}
+        has_mat = False
 
-class BakePosition(bpy.types.Operator):
-    bl_idname = "bake.position_mask"
+    mask['mat'], mask['output'] = create_mat(''.join(['mask_', map_type])) #Output is actually a BSDF node
+    ob.active_material = mask['mat']
+    mask['image_node'] = mask['mat'].node_tree.nodes.new("ShaderNodeTexImage")
+    mask['image'] = create_img(''.join([ob.name, '_', map_type]), width, height)
+    mask['image_node'].image = mask['image']
+
+    if map_type == 'AO':
+        img_mask = ao_mask(mask)
+    elif map_type == 'POS':
+        img_mask = position_mask(context, mask)
+    elif map_type == 'CURVE':
+        img_mask = curvature_mask(context, mask)
+    if has_mat:
+        ob.active_material = original_mat
+    bpy.data.materials.remove(mask['mat'], do_unlink=True)
+    return img_mask
+
+class BakeMask(bpy.types.Operator):
+    bl_idname = "bake.bake_maps"
     bl_label = "Pre-Process Mesh"
     bl_options = {'REGISTER', 'UNDO'}
-    
-    def execute(self, context):
-        resolution = [1024, 1024]
-        pos_mask = get_mask(context, resolution, 'POS')
-        #curve_mask = get_mask(context, resolution, 'CURVE')
-        return {'FINISHED'}
 
-class BakeAO(bpy.types.Operator):
-    bl_idname = "bake.ao_mask"
-    bl_label = "AO"
-    bl_options = {'REGISTER', 'UNDO'}
+    width = bpy.props.FloatProperty(
+        name = "Width",
+        default = 512,
+    )
+    height = bpy.props.FloatProperty(
+        name = "Height",
+        default = 512,
+    )
+
+    supported_maps = [
+        ('AO', '', ''),
+        ('POS', '', ''),
+        ('CURVE', '', '')]
+
+    bake_type = bpy.props.EnumProperty(
+        name = "Bake Type",
+        description = "Type of map needed baking for a mask",
+        default = 'AO',
+        items = supported_maps,
+    )
+
+    #classmethod is required when running a function from an instance of the class and in this case
+    #the poll() method is called to check whether baking is possible.
+    @classmethod
+    def poll(cls, context):
+        return context.active_object is not None
 
     def execute(self, context):
-        resolution = [1024, 1024]
-        ao_mask = get_mask(context, resolution, 'AO')
-        return {'FINISHED'}
+        if self.poll(context):
+            mask = get_mask(context, self.width, self.height, self.bake_type)
+            mask.pack(as_png=True)
+            return {'FINISHED'}
+        else:
+            return {'CANCELLED'}
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "width")
+        layout.prop(self, "height")
     
 def register():
-    bpy.utils.register_class(BakeAO)
-    bpy.utils.register_class(BakePosition)
+    bpy.utils.register_class(BakeMask)
     
 def unregister():
-    bpy.utils.unregister_class(BakeAO)
-    bpy.utils.unregister_class(BakePosition)
+    bpy.utils.unregister_class(BakeMask)
 
 if __name__ == '__main__':
     register()

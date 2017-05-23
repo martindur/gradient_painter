@@ -15,6 +15,7 @@ bl_info = {
 #       GrP types = ('UV', 'PROJ', 'COL', 'AO')
 
 import bpy
+import mask_baking
 from collections import OrderedDict
 from bpy.props import (
         StringProperty,

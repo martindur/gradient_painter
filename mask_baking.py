@@ -1,15 +1,5 @@
 import bpy
-
-
-
-def min_vertex(mesh, axis):
-    for i, vt in enumerate(mesh.vertices):
-        v = eval('.'.join(['vt.co', axis]))
-        if i == 0:
-            min = v
-        if v < min:
-            min = v
-    return min
+import gp_utils as gp
 
 def enable_color_bake_settings():
     scn = bpy.context.scene
@@ -18,21 +8,15 @@ def enable_color_bake_settings():
     bake_settings.use_pass_direct = False
     bake_settings.use_pass_indirect = False
 
-def create_mat(name):
+def create_bake_mat(context, name):
     """Returns a material and the output node of that material"""
+    ob = context.active_object
     mat = bpy.data.materials.new(name)
     mat.use_nodes = True
     out_node = mat.node_tree.nodes['Diffuse BSDF']
     out_node.name = 'out'
-    
-    return mat, out_node
 
-def create_img(name, width, height):
-    """Returns an image type"""
-    img = bpy.data.images.new(name, width, height)
-    img.use_fake_user = True
-    img.pack(as_png=True)
-    return img
+    return mat, out_node
     
 
 def ao_mask(mask):
@@ -51,7 +35,7 @@ def position_mask(context, mask):
     tex_coord = nodes.new("ShaderNodeTexCoord")
     mapping = nodes.new("ShaderNodeMapping")
     mapping.rotation[1] = 1.5708 #Radian rotation of 90 degrees in Y
-    mapping.translation[0] = abs(min_vertex(ob.data, 'z'))
+    mapping.translation[0] = abs(gp.min_vertex(ob.data, 'z'))
     gr_tex = nodes.new("ShaderNodeTexGradient")
     #
     #Nodes linking
@@ -107,10 +91,10 @@ def get_mask(context, width, height, map_type):
     else:
         has_mat = False
 
-    mask['mat'], mask['output'] = create_mat(''.join(['mask_', map_type])) #Output is actually a BSDF node
+    mask['mat'], mask['output'] = create_bake_mat(''.join(['mask_', map_type])) #Output is actually a BSDF node
     ob.active_material = mask['mat']
     mask['image_node'] = mask['mat'].node_tree.nodes.new("ShaderNodeTexImage")
-    mask['image'] = create_img(''.join([ob.name, '_', map_type]), width, height)
+    mask['image'] = gp.get_img(ob, ''.join([ob.name, '_', map_type]), width, height)
     mask['image_node'].image = mask['image']
 
     if map_type == 'AO':

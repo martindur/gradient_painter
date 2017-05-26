@@ -91,7 +91,7 @@ def get_mask(context, width, height, map_type):
     else:
         has_mat = False
 
-    mask['mat'], mask['output'] = create_bake_mat(''.join(['mask_', map_type])) #Output is actually a BSDF node
+    mask['mat'], mask['output'] = create_bake_mat(context, ''.join(['mask_', map_type])) #Output is actually a BSDF node
     ob.active_material = mask['mat']
     mask['image_node'] = mask['mat'].node_tree.nodes.new("ShaderNodeTexImage")
     mask['image'] = gp.get_img(ob, ''.join([ob.name, '_', map_type]), width, height)

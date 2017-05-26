@@ -40,7 +40,7 @@ def get_mat(context, ob):
 
 def get_img(ob, name, width, height):
     """Returns an image type"""
-    img = get_item(context, 'IMG', ob)
+    img = get_item(bpy.context, 'IMG', ob)
     if img is None:
         img = bpy.data.images.new(name, width, height)
         img.use_fake_user = True

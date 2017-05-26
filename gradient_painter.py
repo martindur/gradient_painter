@@ -25,9 +25,6 @@ from bpy.props import (
         CollectionProperty,
         )
 
-node_val_ramp = None
-node_col_ramp = None
-
 ####################################
 ####    UTILITIES
 #
@@ -41,67 +38,69 @@ def min_vertex(mesh, axis):
             min = v
     return min
 
-def get_item(context, item, ob, map_type=None):
-    """Returns item of interest if existing. Returns none if not"""
-    if item == 'MAT':
-        for mat in bpy.data.materials:
-            try:
-                if mat['ID'] == ob['ID']:
-                    return mat
-            except:
-                continue
-        return None
-    elif item == 'IMG':
-        for img in bpy.data.images:
-            try:
-                if img['ID'] == ob['ID'] and img['mask'] == map_type:
-                    bpy.data.images.remove(img, do_unlink=True)
-                    return None
-            except:
-                continue
-        return None
-    else:
-        print("Wrong ID types!")
+def check_image_id(context, ob, map_type):
+    """Removes existing image if ID exists, to bake on a new version(Resolution might have changed). Returns None"""
+    for img in bpy.data.images:
+        try:
+            if img['ID'] == ob['ID'] and img['mask'] == map_type:
+                bpy.data.images.remove(img, do_unlink=True)
+                return None
+        except:
+            continue
+    return None
 
-def get_mat(context, ob):
+def check_mat_id(context, ob, mask):
+    """Returns mat if existing. Returns None if not"""
+    for mat in bpy.data.materials:
+        try:
+            if mat['ID'] == ob['ID']:
+                image_node = mat.node_tree.nodes['Image Texture']
+                image_node.image = mask
+                return mat
+        except:
+            continue
+    return None
+
+def get_mat(context, ob, mask, type):
     """Returns/creates material that fits object ID"""
-    mat = get_item(context, 'MAT', ob)
+    mat = check_mat_id(context, ob, mask)
     if mat is None:
         mat = bpy.data.materials.new(ob.name)
+        mat.use_nodes = True
+        ramp = add_node(context, mat, mask, type)
+        gptex = mat.node_tree.nodes.new("ShaderNodeTexImage")
+        gptex.name = "GPTEX"
         mat['ID'] = ob['ID']
+        
     return mat
 
 def get_img(ob, name, width, height, map_type):
     """Returns an image type"""
-    img = get_item(bpy.context, 'IMG', ob, map_type)
+    img = check_image_id(bpy.context, ob, map_type)
     if img is None:
         img = bpy.data.images.new(name, width, height)
         img.use_fake_user = True
-        img.pack(as_png=True)
         img['ID'] = ob['ID']
         img['mask'] = map_type
     return img
 
-def check_id(context, ob):
-    try:
-        if ob['ID'] >= 0:
-            return ob
-    except:
-        pass
-
+def check_id(context, obj):
+    if obj.get('ID') is not None:
+        print("ID is not None")
+        return
+    
     ob_IDs = []
     for ob in bpy.data.objects:
-        try:
-            if ob['ID'] >= 0:
-                ob_IDs.append(ob['ID'])
-        except:
-            continue
+        if ob.get('ID') is not None:
+            ob_IDs.append(ob['ID'])
     
     if len(ob_IDs) == 0:
-        ob['ID'] = 0
+        obj['ID'] = 0
+        print("Length was 0")
     else:
         #Yes this is correct, don't do +=, it doesn't work.
-        ob['ID'] = max(ob_IDs) + 1
+        obj['ID'] = max(ob_IDs) + 1
+        print("ID Should be added")
 
 ####################################
 ####    MASK BAKING
@@ -235,20 +234,22 @@ def handle_projection(context):
 ####    Material Handling
 #
 
-def add_node(context, mat, mask):
+def add_node(context, mat, mask, type):
     """Returns a base node with the ramp for control"""
     nodes = mat.node_tree.nodes
     links = mat.node_tree.links
-    ramp = nodes.new("ShaderNodeValToRGB")
-    mask = nodes.new("ShaderNodeTexImage")
+    ramp_node = nodes.new("ShaderNodeValToRGB")
+    ramp_node.name = type
+    image_node = nodes.new("ShaderNodeTexImage")
+    image_node.name = "MASK"
     out = nodes['Diffuse BSDF']
     
-    mask.image = mask
+    image_node.image = mask
     
-    links.new(mask.outputs[0], ramp.inputs[0])
-    links.new(ramp.outputs[0], out.inputs[0])
+    links.new(image_node.outputs[0], ramp_node.inputs[0])
+    links.new(ramp_node.outputs[0], out.inputs[0])
     
-    return ramp
+    return ramp_node
 
 ####################################
 ####    CLASSES
@@ -267,27 +268,32 @@ class MenuPanel(bpy.types.Panel):
         ob = context.active_object
 
         col = layout.column(align=False)
-        col.label(text="Mask Baking:")
+        col.label(text="Pre-Process Masks:")
         row = col.row(align=False)
         layout.prop(scn, "texture_width")
         layout.prop(scn, "texture_height")
         row.operator("bake.bake_maps")
 
-        if len(ob.material_slots.items()) > 0:
-            ob_mat = ob.material_slots[0]
+        if context.active_object.active_material:
+            mat = context.active_object.active_material
+            layout.label("Gradient Control:")
+            row = layout.row()
             try:
-                layout.label("Texture Control:")
-                row = layout.row()
-                node_col_ramp = ob_mat.material.node_tree.nodes['Color']
-                layout.template_color_ramp(node_col_ramp, "color_ramp", expand=True)
-                node_val_ramp = ob_mat.material.node_tree.nodes['Value']
-                layout.template_color_ramp(node_val_ramp, "color_ramp", expand=True)
+                ramp = mat.node_tree.nodes['AO']
+                layout.template_color_ramp(ramp, "color_ramp", expand=True)
             except:
                 pass
 
+        col = layout.column()
+        col.label(text="Output:")
+        row = col.row()
+        row.operator("bake.bake_gptex")
+
+
+
 class BakeMask(bpy.types.Operator):
     bl_idname = "bake.bake_maps"
-    bl_label = "Pre-Process Mesh"
+    bl_label = "Calculate"
     bl_options = {'REGISTER', 'UNDO'}
 
     width = bpy.props.FloatProperty(
@@ -321,12 +327,14 @@ class BakeMask(bpy.types.Operator):
         tex_width = context.scene.texture_width
         tex_height = context.scene.texture_height
         if self.poll(context):
+            ob = context.active_object
             handle_projection(context)
-            check_id(context, context.active_object)
+            check_id(context, ob)
             ##NEEDS CHANGING!: - Should use own draw method with class properties, and not scene properties.
             mask = get_mask(context, tex_width, tex_height, self.bake_type)
             mask.pack(as_png=True)
-
+            mat = get_mat(context, ob, mask, self.bake_type)
+            ob.active_material = mat
             return {'FINISHED'}
         else:
             return {'CANCELLED'}
@@ -335,6 +343,46 @@ class BakeMask(bpy.types.Operator):
         layout = self.layout
         layout.prop(self, "width")
         layout.prop(self, "height")
+
+class BakeFinal(bpy.types.Operator):
+    bl_idname = "bake.bake_gptex"
+    bl_label = "Bake Texture"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def make_gptex(self, context):
+        tex_width = context.scene.texture_width
+        tex_height = context.scene.texture_height
+        ob = context.active_object
+        for img in bpy.data.images:
+            try:
+                if img['ID'] == ob['ID'] and img['type'] == 'GPTEX':
+                    return img
+            except:
+                continue
+        gptex = bpy.data.images.new(ob.name + "_GPTEX", tex_width, tex_height)
+        gptex['ID'] = ob['ID']
+        gptex['type'] = 'GPTEX'
+        return gptex
+    
+    @classmethod
+    def poll(cls, context):
+        if context.active_object.active_material is not None:
+            mat = context.active_object.active_material
+            return mat.get('ID') is not None
+
+    def execute(self, context):
+        if self.poll(context):
+            mat = context.active_object.active_material
+            for node in mat.node_tree.nodes:
+                if node.name == "GPTEX":
+                    gptex = node
+            gptex.image = self.make_gptex(context)
+            mat.node_tree.nodes.active = gptex
+            enable_color_bake_settings()
+            bpy.ops.object.bake(type='DIFFUSE')
+        else:
+            self.report({'WARNING'}, "Wrong material or object")
+            
 
 def register():
     #Scene properties
@@ -358,12 +406,14 @@ def register():
     )
     bpy.utils.register_class(MenuPanel)
     bpy.utils.register_class(BakeMask)
+    bpy.utils.register_class(BakeFinal)
     
 def unregister():
     del bpy.types.Scene.texture_width
     del bpy.types.Scene.texture_height
     bpy.utils.unregister_class(MenuPanel)
     bpy.utils.unregister_class(BakeMask)
+    bpy.utils.unregister_class(BakeFinal)
     
 if __name__ == '__main__':
     register()

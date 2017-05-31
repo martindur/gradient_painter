@@ -1,4 +1,6 @@
 import bpy
+import colorsys
+import random
 from bpy.props import (
         StringProperty,
         BoolProperty,
@@ -74,6 +76,45 @@ def create_bake_mat(context, name):
     out_node.name = 'out'
 
     return mat, out_node
+
+def id_map(context, map):
+    ob = context.active_object
+
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.mesh.select_all(action='DESELECT')
+
+    groups = len(ob.vertex_groups)
+    tmp_mats = []
+    for idx, mat in enumerate(range(groups)):
+        mat = bpy.data.materials.new('_'.join(["mat", str(idx)]))
+        col = colorsys.hsv_to_rgb(random.random(), 1.0, 1.0)
+        mat.diffuse_color = col
+        mat.use_nodes = True
+        map_node = mat.node_tree.nodes.new("ShaderNodeTexImage")
+        map_node.image = map['image']
+        mat.node_tree.nodes.active = map_node
+        if idx is not 0:
+            bpy.ops.object.material_slot_add()
+        ob.material_slots[idx].material = mat
+        tmp_mats.append(mat)
+
+    for vgroup in ob.vertex_groups:
+        idx = vgroup.index
+        ob.vertex_groups.active_index = idx
+        bpy.ops.object.vertex_group_select()
+        ob.active_material_index = idx
+        bpy.ops.object.material_slot_assign()
+        bpy.ops.mesh.select_all(action='DESELECT')
+
+    enable_color_bake_settings()
+    bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.ops.object.bake(type='DIFFUSE')
+
+    for mat in tmp_mats:
+        bpy.data.materials.remove(mat, do_unlink=True)
+        bpy.ops.object.material_slot_remove()
+
+    return map['image']
 
 def ao_map(map):
     """Returns an image with a baked Ambient Occlusion"""
@@ -164,6 +205,8 @@ def get_map(context, width, height, map_type):
         img_map = position_map(context, map)
     elif map_type == 'CURVE':
         img_map = curvature_map(context, map)
+    elif map_type == 'ID':
+        img_map = id_map(context, map)
     if has_mat:
         ob.active_material = original_mat
     bpy.data.materials.remove(map['mat'], do_unlink=True)
@@ -295,7 +338,8 @@ def register():
         default = 'AO',
         items = [('AO', 'Ambient Occlusion', ''),
                  ('CURVE', 'Curvature', ''),
-                 ('POS', 'Position', '')]
+                 ('POS', 'Position', ''),
+                 ('ID', 'ID', '')]
     )
 
     for c in classes:

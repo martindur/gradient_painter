@@ -1,3 +1,13 @@
+bl_info = {
+    "name" : "GameTex Tools",
+    "author" : "Martin Durhuus",
+    "version" : (0,3),
+    "blender" : (2,78,0),
+    "location" : "3d view",
+    "description" : "Adds baking functionality for game bakes and exposing node parameters to tool view",
+    "category" : "Paint",
+}
+
 import bpy
 import colorsys
 import random
